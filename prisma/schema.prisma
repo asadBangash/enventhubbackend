@@ -1,0 +1,556 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Enums ----------
+
+enum Role {
+  buyer
+  seller
+  admin
+}
+
+enum UserStatus {
+  active
+  suspended
+}
+
+enum CategoryType {
+  event
+  service
+}
+
+enum VerificationStatus {
+  not_submitted
+  submitted
+  approved
+  rejected
+}
+
+enum ListingStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  REJECTED
+  ARCHIVED
+}
+
+enum PackageTier {
+  BASIC
+  STANDARD
+  PREMIUM
+}
+
+enum SlotState {
+  AVAILABLE
+  BOOKED
+  UNAVAILABLE
+}
+
+enum EventStatus {
+  DRAFT
+  UPCOMING
+  CANCELLED
+}
+
+enum RequestStatus {
+  PENDING
+  RESPONDED
+  ACCEPTED
+  DECLINED
+  CANCELLED
+}
+
+enum OfferStatus {
+  SENT
+  ACCEPTED
+  DECLINED
+  EXPIRED
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum ReviewStatus {
+  PUBLISHED
+  REMOVED
+}
+
+enum DisputeStatus {
+  OPEN
+  RESOLVED
+  REJECTED
+}
+
+enum PayoutStatus {
+  PENDING
+  APPROVED
+  PAID
+  REJECTED
+}
+
+// ---------- Users and categories ----------
+
+model User {
+  id               Int        @id @default(autoincrement())
+  name             String
+  email            String     @unique
+  passwordHash     String
+  phone            String?
+  city             String?
+  avatarUrl        String?
+  organizationName String?
+  role             Role       @default(buyer)
+  status           UserStatus @default(active)
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  sellerProfile     SellerProfile?
+  listings          Listing[]
+  portfolioItems    PortfolioItem[]
+  availabilitySlots AvailabilitySlot[]
+  events            Event[]
+  requestsMade      ServiceRequest[]      @relation("RequestBuyer")
+  requestsReceived  ServiceRequest[]      @relation("RequestSeller")
+  offers            Offer[]
+  bookingsAsBuyer   Booking[]             @relation("BookingBuyer")
+  bookingsAsSeller  Booking[]             @relation("BookingSeller")
+  reviewsWritten    Review[]              @relation("ReviewBuyer")
+  reviewsReceived   Review[]              @relation("ReviewSeller")
+  notifications     Notification[]
+  messagesSent      Message[]
+  conversationsA    Conversation[]        @relation("ConvUserA")
+  conversationsB    Conversation[]        @relation("ConvUserB")
+  disputesRaised    Dispute[]
+  verifications     VerificationRequest[]
+  auditLogs         AuditLog[]
+  passwordResets    PasswordResetToken[]
+  stripeCustomerId  String?               @unique
+  buyerPaymentMethods BuyerPaymentMethod[]
+  sellerPayoutMethods SellerPayoutMethod[]
+  payoutRequests    PayoutRequest[]
+}
+
+model SellerProfile {
+  id                 Int                @id @default(autoincrement())
+  userId             Int                @unique
+  user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessName       String
+  contactPerson      String?
+  description        String?            @db.Text
+  experienceYears    Int?
+  website            String?
+  location           String?
+  serviceAreas       String?            @db.Text
+  logoUrl            String?
+  coverUrl           String?
+  primaryCategoryId  Int?
+  primaryCategory    Category?          @relation(fields: [primaryCategoryId], references: [id])
+  verificationStatus VerificationStatus @default(not_submitted)
+  isVerified         Boolean            @default(false)
+  profileViews       Int                @default(0)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+}
+
+model Category {
+  id             Int             @id @default(autoincrement())
+  name           String
+  slug           String          @unique
+  type           CategoryType    @default(service)
+  createdAt      DateTime        @default(now())
+  sellerProfiles SellerProfile[]
+  listings       Listing[]
+}
+
+model PasswordResetToken {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+// ---------- Seller side ----------
+
+model Listing {
+  id          Int           @id @default(autoincrement())
+  sellerId    Int
+  seller      User          @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  categoryId  Int
+  category    Category      @relation(fields: [categoryId], references: [id])
+  title       String
+  description String        @db.Text
+  location    String?
+  price       Decimal       @db.Decimal(12, 2)
+  currency    String        @default("PKR")
+  pricingType String        @default("fixed")
+  features    String?       @db.Text
+  terms       String?       @db.Text
+  status      ListingStatus @default(DRAFT)
+  isFeatured  Boolean       @default(false)
+  views       Int           @default(0)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  images   ListingImage[]
+  packages Package[]
+  requests ServiceRequest[]
+  bookings Booking[]
+
+  @@index([sellerId])
+  @@index([categoryId])
+  @@index([status])
+  @@index([isFeatured])
+}
+
+model ListingImage {
+  id        Int      @id @default(autoincrement())
+  listingId Int
+  listing   Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  url       String
+  altText   String?
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([listingId])
+}
+
+model Package {
+  id         Int         @id @default(autoincrement())
+  listingId  Int
+  listing    Listing     @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  tier       PackageTier
+  name       String?
+  price      Decimal     @db.Decimal(12, 2)
+  inclusions String      @db.Text
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  @@unique([listingId, tier])
+}
+
+model PortfolioItem {
+  id          Int      @id @default(autoincrement())
+  sellerId    Int
+  seller      User     @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  imageUrl    String
+  title       String
+  description String?  @db.Text
+  createdAt   DateTime @default(now())
+
+  @@index([sellerId])
+}
+
+model AvailabilitySlot {
+  id       Int       @id @default(autoincrement())
+  sellerId Int
+  seller   User      @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  date     DateTime  @db.Date
+  state    SlotState @default(UNAVAILABLE)
+
+  @@unique([sellerId, date])
+}
+
+model VerificationRequest {
+  id           Int                @id @default(autoincrement())
+  userId       Int
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documentType String
+  documentUrl  String?
+  note         String?            @db.Text
+  status       VerificationStatus @default(submitted)
+  reviewedById Int?
+  reviewNote   String?            @db.Text
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  @@index([userId])
+}
+
+// ---------- Buyer side: events ----------
+
+model Event {
+  id          Int         @id @default(autoincrement())
+  buyerId     Int
+  buyer       User        @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+  name        String
+  category    String?
+  eventDate   DateTime?
+  eventTime   String?
+  location    String?
+  guests      Int?
+  budget      Decimal?    @db.Decimal(12, 2)
+  description String?     @db.Text
+  status      EventStatus @default(UPCOMING)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  services EventService[]
+  requests ServiceRequest[]
+  bookings Booking[]
+
+  @@index([buyerId])
+}
+
+model EventService {
+  id          Int    @id @default(autoincrement())
+  eventId     Int
+  event       Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  serviceType String
+  status      String @default("NEEDED")
+
+  @@index([eventId])
+}
+
+// ---------- Quote flow ----------
+
+model ServiceRequest {
+  id        Int           @id @default(autoincrement())
+  buyerId   Int
+  buyer     User          @relation("RequestBuyer", fields: [buyerId], references: [id], onDelete: Cascade)
+  sellerId  Int?
+  seller    User?         @relation("RequestSeller", fields: [sellerId], references: [id], onDelete: SetNull)
+  listingId Int?
+  listing   Listing?      @relation(fields: [listingId], references: [id], onDelete: SetNull)
+  eventId   Int?
+  event     Event?        @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  title     String
+  eventDate DateTime?
+  location  String?
+  minBudget Decimal?      @db.Decimal(12, 2)
+  maxBudget Decimal?      @db.Decimal(12, 2)
+  details   String        @db.Text
+  status    RequestStatus @default(PENDING)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  offers Offer[]
+
+  @@index([buyerId])
+  @@index([sellerId])
+}
+
+model Offer {
+  id          Int            @id @default(autoincrement())
+  requestId   Int
+  request     ServiceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  sellerId    Int
+  seller      User           @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  amount      Decimal        @db.Decimal(12, 2)
+  currency    String         @default("PKR")
+  description String         @db.Text
+  validUntil  DateTime?
+  status      OfferStatus    @default(SENT)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  booking Booking?
+
+  @@index([requestId])
+  @@index([sellerId])
+}
+
+// ---------- Booking, payment, commission ----------
+
+model Booking {
+  id        Int           @id @default(autoincrement())
+  buyerId   Int
+  buyer     User          @relation("BookingBuyer", fields: [buyerId], references: [id], onDelete: Cascade)
+  sellerId  Int
+  seller    User          @relation("BookingSeller", fields: [sellerId], references: [id], onDelete: Cascade)
+  listingId Int?
+  listing   Listing?      @relation(fields: [listingId], references: [id], onDelete: SetNull)
+  offerId   Int?          @unique
+  offer     Offer?        @relation(fields: [offerId], references: [id], onDelete: SetNull)
+  eventId   Int?
+  event     Event?        @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  eventDate DateTime?
+  amount    Decimal       @db.Decimal(12, 2)
+  currency  String        @default("PKR")
+  status    BookingStatus @default(PENDING)
+  note      String?       @db.Text
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  payment    Payment?
+  commission Commission?
+  review     Review?
+  disputes   Dispute[]
+
+  @@index([buyerId])
+  @@index([sellerId])
+}
+
+model Payment {
+  id                    Int           @id @default(autoincrement())
+  bookingId             Int           @unique
+  booking               Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  method                String        @default("DEMO")
+  amount                Decimal       @db.Decimal(12, 2)
+  buyerFee              Decimal       @default(0) @db.Decimal(12, 2)
+  status                PaymentStatus @default(PENDING)
+  idempotencyKey        String        @unique
+  stripeSessionId       String?       @unique
+  stripePaymentIntentId String?       @unique
+  createdAt             DateTime      @default(now())
+}
+
+model BuyerPaymentMethod {
+  id                    Int      @id @default(autoincrement())
+  userId                Int
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stripePaymentMethodId String?  @unique
+  brand                 String?
+  last4                 String?
+  expMonth              Int?
+  expYear               Int?
+  isDefault             Boolean  @default(false)
+  createdAt             DateTime @default(now())
+
+  @@index([userId])
+}
+
+model SellerPayoutMethod {
+  id            Int      @id @default(autoincrement())
+  userId        Int
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label         String
+  accountHolder String
+  accountNumber String
+  bankName      String?
+  isDefault     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  payoutRequests PayoutRequest[]
+
+  @@index([userId])
+}
+
+model PayoutRequest {
+  id             Int                 @id @default(autoincrement())
+  sellerId       Int
+  seller         User                @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  amount         Decimal             @db.Decimal(12, 2)
+  status         PayoutStatus        @default(PENDING)
+  note           String?             @db.Text
+  payoutMethodId Int?
+  payoutMethod   SellerPayoutMethod? @relation(fields: [payoutMethodId], references: [id], onDelete: SetNull)
+  processedAt    DateTime?
+  createdAt      DateTime            @default(now())
+
+  @@index([sellerId])
+  @@index([status])
+}
+
+model Commission {
+  id        Int      @id @default(autoincrement())
+  bookingId Int      @unique
+  booking   Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  rate      Decimal  @db.Decimal(5, 4)
+  amount    Decimal  @db.Decimal(12, 2)
+  sellerNet Decimal  @db.Decimal(12, 2)
+  createdAt DateTime @default(now())
+}
+
+// ---------- Reviews, messages, notifications, disputes, audit ----------
+
+model Review {
+  id        Int          @id @default(autoincrement())
+  bookingId Int          @unique
+  booking   Booking      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  buyerId   Int
+  buyer     User         @relation("ReviewBuyer", fields: [buyerId], references: [id], onDelete: Cascade)
+  sellerId  Int
+  seller    User         @relation("ReviewSeller", fields: [sellerId], references: [id], onDelete: Cascade)
+  rating    Int
+  comment   String       @db.Text
+  status    ReviewStatus @default(PUBLISHED)
+  createdAt DateTime     @default(now())
+
+  @@index([sellerId])
+}
+
+model Conversation {
+  id        Int       @id @default(autoincrement())
+  userAId   Int
+  userA     User      @relation("ConvUserA", fields: [userAId], references: [id], onDelete: Cascade)
+  userBId   Int
+  userB     User      @relation("ConvUserB", fields: [userBId], references: [id], onDelete: Cascade)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  messages  Message[]
+
+  @@unique([userAId, userBId])
+}
+
+model Message {
+  id             Int          @id @default(autoincrement())
+  conversationId Int
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId       Int
+  sender         User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  body           String       @db.Text
+  readAt         DateTime?
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId])
+}
+
+model Notification {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  text      String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Dispute {
+  id          Int           @id @default(autoincrement())
+  bookingId   Int
+  booking     Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  raisedById  Int
+  raisedBy    User          @relation(fields: [raisedById], references: [id], onDelete: Cascade)
+  description String        @db.Text
+  status      DisputeStatus @default(OPEN)
+  resolution  String?       @db.Text
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([bookingId])
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  adminId   Int
+  admin     User     @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  action    String
+  entity    String
+  entityId  Int?
+  details   String?  @db.Text
+  createdAt DateTime @default(now())
+}
